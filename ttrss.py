@@ -6,15 +6,9 @@ from bs4 import BeautifulSoup
 import openai
 from selenium import webdriver
 from requests_html import HTMLSession
+import requests
+import schedule
 
-
-GPT_PROMPT='''
-Here is an article about a cybersecurity incident:
-{article}
-
-I would like you to answer the following questions about the incident:
-{questions}
-'''
 
 def login(endpoint,user,password):
     body = {
@@ -108,24 +102,25 @@ def invoke_selenium(url):
 
 if __name__ =="__main__":
     parser = argparse.ArgumentParser(description='Process some integers.')
-    parser.add_argument('--user', type=str, required=True,
-                        help='the user name')
-    parser.add_argument('--password', type=str, required=True,
-                        help='the password')
-    parser.add_argument('--questions', type=str, required=True,
-                        help='the questions for GPT')
-    parser.add_argument('--api_key', type=str, required=True,
-                        help='the api key for GPT')
-    parser.add_argument('--endpoint', type=str, required=True,
-                        help='the endpoint for TTRSS')
+    parser.add_argument('--config', dest='config', default='config.json',
+                        help='config file path')
     
     args = parser.parse_args()
-    TTRSS_ENDPOINT=args.endpoint
-    session_id=login(TTRSS_ENDPOINT,args.user,args.password)
-    # print("Session id "+str(session_id))
+    with open(args.config) as f:
+        config=json.load(f)
+
+    with open(config['prompt']) as f:
+        GPT_PROMPT=f.read()
+    
+    with open(config['questions']) as f:
+        questions=f.readlines()
+
+    
+    TTRSS_ENDPOINT=config['TTRSS_ENDPOINT']
+
+    session_id=login(TTRSS_ENDPOINT,config['user'],config['password'])
     headlines=get_headlines(TTRSS_ENDPOINT,session_id)
-    # print("HEADLINES:")
-    # print(headlines)
+
 
     breach_link_original_link={}
     with open(args.questions) as f:
@@ -148,7 +143,7 @@ if __name__ =="__main__":
     for original_link in original_links:
         html=make_request_with_session(original_link).content.decode('utf-8')
         text=extract_text(html)
-        query_result=gpt_query(text,questions,args.api_key)
+        query_result=gpt_query(text,questions,config['OPENAI_API_KEY'])
         print(query_result)
 
         
