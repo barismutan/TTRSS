@@ -1,6 +1,6 @@
 *:warning:  New Breach Report:* 
 
-*_Ransomware Gang Haunted US Firms Long Before MOVEit Hack - Bloomberg_*
+*{title}*
 
 *Victim Information:*
 • *Victim Organization:* {organization}
