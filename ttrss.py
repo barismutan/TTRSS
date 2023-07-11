@@ -360,18 +360,25 @@ if __name__ =="__main__":
     logging.basicConfig(filename='TTRSS.log',level=logging.DEBUG)
     parser = argparse.ArgumentParser(description='Process some integers.')
     parser.add_argument('--config', dest='config', default='config.json',
-                        help='config file path', required=False)
+                        help='config file path', required=True)
+    
+    parser.add_argument('--test', dest='test',
+                        help='Specify whether to run in test mode (no scheduling)',required=True)
     
     logging.info("[{}]Starting TTRSS".format(str(datetime.now())))
     args = parser.parse_args()
     with open(args.config) as f:
         config=json.load(f)
 
-    # ttrss=TTRSS(config)
-    # ttrss.job()
-
     logging.info("[{}]Starting TTRSS".format(str(datetime.now())))
-    schedule_job(config) #NOTE: uncomment this to run on a schedule
+
+    if args.test=="true":
+        ttrss=TTRSS(config)
+        ttrss.job()
+    elif args.test=="false":
+        schedule_job(config)
+    else:
+        print("Invalid argument for --test, must be true or false")
 
 
 
@@ -388,6 +395,8 @@ if __name__ =="__main__":
 #NOTE: 502 error from bad gateway when querying gpt, need to handle this.
 #NOTE: we get SSL error from some sites, need to handle this.
 #NOTE: better idea: DO THE MARK AS READ AFTER THE CALL TO THE PROCESS UNREAD FUNCTION, embed some logic there.
+#NOTE: We are getting 403 errors from some sites, including cisa.gov
+
             
     
 
