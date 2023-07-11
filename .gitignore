@@ -155,6 +155,7 @@ cython_debug/
 *.json
 *.log
 *.txt
+*.out
 
 # PyCharm
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
