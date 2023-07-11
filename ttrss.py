@@ -45,6 +45,14 @@ class TTRSS:
             "sid":""
         }#NOTE: field 2 is the "unread" field, setting it to 0 <false> ideally marks it as read
 
+        self.MARK_AS_UNREAD_BODY={
+            "op":"updateArticle",
+            "article_ids":None,
+            "mode":1,
+            "field":2,
+            "sid":""
+        }
+
         self.EXTERNAL_HEADERS = {
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.5 Safari/605.1.15',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
@@ -231,46 +239,40 @@ class TTRSS:
         return response
 
     def process_unread(self,article_id):
+
+        article=self.get_article(article_id)
+        article_link=self.get_article_link_databreaches(article)
+        original_link=self.get_article_link_original(article_link)
+        print("does it get here?" + original_link)
+        html=self.make_request_with_session(original_link)
+        if html==None:
+            return
+        text=self.extract_text(html)
+        print("TEXT:"+text)
         try:
-            article=self.get_article(article_id)
-            article_link=self.get_article_link_databreaches(article)
-            original_link=self.get_article_link_original(article_link)
-            print("does it get here?" + original_link)
-            html=self.make_request_with_session(original_link)
-            if html==None:
-                return
-            text=self.extract_text(html)
-            print("TEXT:"+text)
-            try:
-                query_result=self.gpt_query(text)
-                if query_result is None:
-                    return None # to not mark as read
-                self.mark_as_read(article_id)
-                print("MARKED AS READ")
-            except openai.error.InvalidRequestError:
+            query_result=self.gpt_query(text)
+            if query_result is None:
+                return 
+            # self.mark_as_read(article_id)
+            print("MARKED AS READ")
+        except openai.error.InvalidRequestError:
 
-                while True:
-                    text=self.trim_text(text)
-                    try:
-                        print("Trying again with shorter text")
-                        query_result=self.gpt_query(text)
-                        if query_result is None: 
-                            # break
-                            return # to not mark as read NEW
-                        self.mark_as_read(article_id)
-                        print("MARKED AS READ")
-                        break
-                    except openai.error.InvalidRequestError as e:
-                        print(len(text))
-                        print(e)
-                        continue
-        except Exception as e:
-            logging.error(e)
-            # self.mark_as_unread(article_id)#TODO
-            return None # to not mark as read
+            while True:
+                text=self.trim_text(text)
+                try:
+                    print("Trying again with shorter text")
+                    query_result=self.gpt_query(text)
+                    if query_result is None: 
+                        # break
+                        return # to not mark as read NEW
+                    self.mark_as_read(article_id)
+                    print("MARKED AS READ")
+                    break
+                except openai.error.InvalidRequestError as e:
+                    print(len(text))
+                    print(e)
+                    continue
 
-        
-        # print("QUERY RESULT:" +query_result)
         query_result['Reference']=original_link
         return query_result
 
@@ -313,9 +315,15 @@ class TTRSS:
         for headline in headlines:
             try:
                 print("HEADLINE and ID:"+str(headline)+str(headline['id']))
-                query_result=self.process_unread(headline['id'])
+                try:
+                    query_result=self.process_unread(headline['id'])
+                except Exception as e:
+                    #HERE : in the future we should have a function that takes in the exception and does the hanndling.
+                    logging.error(e)
+                    continue
                 if query_result is None: #way better idea is to wrap the whole thing in a try except for SyntaxError.
                     continue
+                self.mark_as_read(headline['id'])
                 markdown=self.generate_mrkdwn(query_result)
                 # print("TEMPLATE MARKDOWN"+markdown)
                 batch.append(markdown)
@@ -354,16 +362,16 @@ if __name__ =="__main__":
     parser.add_argument('--config', dest='config', default='config.json',
                         help='config file path', required=False)
     
-    
+    logging.info("[{}]Starting TTRSS".format(str(datetime.now())))
     args = parser.parse_args()
     with open(args.config) as f:
         config=json.load(f)
 
-    ttrss=TTRSS(config)
-    ttrss.job()
+    # ttrss=TTRSS(config)
+    # ttrss.job()
 
     logging.info("[{}]Starting TTRSS".format(str(datetime.now())))
-    # schedule_job(config) #NOTE: uncomment this to run on a schedule
+    schedule_job(config) #NOTE: uncomment this to run on a schedule
 
 
 
