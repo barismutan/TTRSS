@@ -72,6 +72,11 @@ class TTRSS:
         
         with open(config['mrkdwn_template'],'r') as f:
             self.mrkdwn_template=f.read()
+        
+        
+        self.anomalies_file=open(config['anomalies_file'],'a')
+
+
 
         
         self.session_id=self.login()
@@ -303,9 +308,16 @@ class TTRSS:
         response=requests.post(self.zapier_webhook,data=mrkdwn.encode('utf-8'))
         return response
 
+    def write_anomaly(self,article_id,error):
+        self.anomalies_file.write(str(datetime.now())+"\n")
+        self.anomalies_file.write(str(article_id)+"\n")
+        self.anomalies_file.write(str(error)+"\n")
+        self.anomalies_file.write("--------------------\n")
+        self.anomalies_file.flush()
+
 
     def job(self):
-   
+        logging.debug("Starting job at "+str(datetime.datetime.now()))
         self.session_id=self.login()
         unread_body=self.UNREAD_BODY
         unread_body['sid']=self.session_id
@@ -320,8 +332,13 @@ class TTRSS:
                 except Exception as e:
                     #HERE : in the future we should have a function that takes in the exception and does the hanndling.
                     logging.error(e)
+                    self.mark_as_read(headline['id'])
+                    self.write_anomaly(headline['id'],e)
                     continue
                 if query_result is None: #way better idea is to wrap the whole thing in a try except for SyntaxError.
+                    logging.error("Query result is None for article:"+str(headline['id']))
+                    self.mark_as_read(headline['id'])
+                    self.write_anomaly(headline['id'],"Query result is None")
                     continue
                 self.mark_as_read(headline['id'])
                 markdown=self.generate_mrkdwn(query_result)
@@ -343,15 +360,23 @@ class TTRSS:
 
 
 
-def schedule_job(config):
+def schedule_job(config,batch_mode=False):
     ttrss=TTRSS(config)
-    for message_time in config['message_times']:
-        schedule.every().day.at(message_time).do(ttrss.job)
+    if batch_mode:
+        for message_time in config['message_times']:
+            schedule.every().day.at(message_time).do(ttrss.job)
+    else:
+        schedule.every().hour.do(ttrss.job)
+
 
     while True:
         schedule.run_pending()
         #sleep for 11 hours and 59 minutes
-        time.sleep(43140)
+        if batch_mode:
+            time.sleep(43140)
+        else:
+        #sleep for 59.5 minutes
+            time.sleep(3570)
 
 def score_article(self,gpt_response):
     pass
@@ -365,20 +390,29 @@ if __name__ =="__main__":
     parser.add_argument('--test', dest='test',
                         help='Specify whether to run in test mode (no scheduling)',required=True)
     
+    parser.add_argument('--batch', dest='batch',
+                        help='Specify whether to run in batch mode (send all articles at given intervals.)',required=False)
+    
+
+    
     logging.info("[{}]Starting TTRSS".format(str(datetime.now())))
     args = parser.parse_args()
     with open(args.config) as f:
         config=json.load(f)
 
     logging.info("[{}]Starting TTRSS".format(str(datetime.now())))
-
-    if args.test=="true":
-        ttrss=TTRSS(config)
-        ttrss.job()
-    elif args.test=="false":
-        schedule_job(config)
-    else:
-        print("Invalid argument for --test, must be true or false")
+    try:
+        if args.test=="true":
+            ttrss=TTRSS(config)
+            ttrss.job()
+        elif args.test=="false":
+            schedule_job(config,args.batch)
+        else:
+            print("Invalid argument for --test, must be true or false")
+    except Exception as e:
+        logging.error("[{}]Error in main:".format(str(datetime.now())))
+        logging.error(traceback.format_exc())
+        print("Error in main:"+str(e))
 
 
 
@@ -396,6 +430,7 @@ if __name__ =="__main__":
 #NOTE: we get SSL error from some sites, need to handle this.
 #NOTE: better idea: DO THE MARK AS READ AFTER THE CALL TO THE PROCESS UNREAD FUNCTION, embed some logic there.
 #NOTE: We are getting 403 errors from some sites, including cisa.gov
+#NOTE: some urls are pdfs, we need to take this into account.
 
             
     
