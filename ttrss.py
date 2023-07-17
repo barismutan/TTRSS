@@ -101,7 +101,8 @@ class TTRSS:
         self.anomalies_file=open(config['anomalies_file'],'a')
         self.anomalies_file.write("----beginning of new run at "+str(datetime.now())+"--------\n")
 
-
+        self.FULL_CONTENT= 1
+        self.SUMMARY_CONTENT=2
 
         
         self.session_id=self.login()
@@ -135,16 +136,16 @@ class TTRSS:
         response=requests.get(self.endpoint,data=json.dumps(body))
         return response.json()['content'][0] #they put the thing in an array for some reason
 
-    def get_article_link_databreaches(self,article):
+    def get_article_link(self,article):
         return article['link']
 
-    def get_article_link_original(self,data_breaches_link):
+    def extract_article_link_from_summary(self,summary_link):
 
-        response=self.make_request_with_session(data_breaches_link)
+        response=self.make_request_with_session(summary_link)
         if response==None:
             raise NoLinksFoundException() #TODO: change this to a different exception
         html=response.content.decode('utf-8') if response.status_code==200 \
-                                            else self.invoke_selenium(data_breaches_link)
+                                            else self.invoke_selenium(summary_link)
         
         for callback in self.extract_link_callbacks:
             href=callback(html)
@@ -190,8 +191,13 @@ class TTRSS:
         text=self.remove_excess_whitespace(full_text)
         return text
 
-    def get_headlines(self):
-        response=requests.get(self.endpoint,data=json.dumps(self.UNREAD_BODY))
+    def get_headlines(self,category):
+        body=self.UNREAD_BODY
+        body['feed_id']=category
+        response=requests.get(self.endpoint,data=json.dumps(
+                body
+                ))
+        
         return response.json()['content']
 
     def get_num_articles(self,headlines):
@@ -279,11 +285,15 @@ class TTRSS:
     
         
 
-    def process_unread(self,article_id):
+    def process_unread(self,article_id,article_category):
 
         article=self.get_article(article_id)
-        article_link=self.get_article_link_databreaches(article)
-        original_link=self.get_article_link_original(article_link)
+        if article_category==self.SUMMARY_CONTENT:
+            article_link=self.get_article_link(article)#NOTE: change function name to get_article_link_summary later...  
+            original_link=self.extract_article_link_from_summary(article_link)
+        else:
+            original_link=self.get_article_link(article)
+
         print("does it get here?" + original_link)
         html=self.make_request_with_session(original_link)
         print("HTML:"+str(html))
@@ -359,6 +369,10 @@ class TTRSS:
         # exit()
         self.anomalies_file.flush()
 
+    def label_article_category(self,headlines,category): #NOTE: this is a workaround for the fact that the API does not return the category of the article rn.
+        for headline in headlines:
+            headline['category']=category
+        return headlines
 
     def job(self):
         logging.debug("Starting job at "+str(datetime.now()))
@@ -366,7 +380,15 @@ class TTRSS:
         self.session_id=self.login()
         unread_body=self.UNREAD_BODY
         unread_body['sid']=self.session_id
-        headlines=self.get_headlines()
+
+        headlines_full_content=self.get_headlines(category=self.FULL_CONTENT)
+        headlines_summary_content=self.get_headlines(category=self.SUMMARY_CONTENT)
+
+        headlines_full_content=self.label_article_category(headlines_full_content,self.FULL_CONTENT)
+        headlines_summary_content=self.label_article_category(headlines_summary_content,self.SUMMARY_CONTENT)
+
+        headlines=headlines_full_content+headlines_summary_content
+        
         query_results=[] #DELETE THIS LATER
 
         batch=[]
@@ -374,7 +396,7 @@ class TTRSS:
             try:
                 print("HEADLINE and ID:"+str(headline)+str(headline['id']))
                 try:
-                    query_result=self.process_unread(headline['id'])
+                    query_result=self.process_unread(headline['id'],headline['category'])
                     query_results.append(query_result)#DELETE THIS LATER
                     
                     result_score=self.score_gpt_response(query_result)
@@ -414,7 +436,8 @@ class TTRSS:
         batch_concat='\n'.join(batch)
         print("BATCH CONCAT:"+batch_concat)
         print("BATCH:"+str(batch))
-        self.message_zapier(batch_concat)
+
+        # self.message_zapier(batch_concat)
 
         with open("responses_with_inference.json","w") as f: ##COMMENT this later
             json.dump(query_results,f)
@@ -497,7 +520,8 @@ if __name__ =="__main__":
 #NOTE: added mark as read in write_anomaly, no need to call that whenever write_anomaly is called already.
 #NOTE: change anomalies to JSON format
 #NOTE: move errors to a separate file
-            
+
+#NOTE: id : 1 --> FullContent || id : 2 --> Summary Content            
     
 
 
