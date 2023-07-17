@@ -24,3 +24,5 @@
 • *Summary:* {summary}
 
 Reference: {reference}
+
+Score: {score}

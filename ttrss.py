@@ -14,9 +14,28 @@ import ast
 from datetime import datetime
 import time
 
+#-----------------Exceptions-----------------#
 class NoLinksFoundException(Exception):
-    def __init__(self):
-        super().__init__("No links found")
+    def __init__(self,article_id):
+        super().__init__("No links found for article "+str(article_id))
+
+class NoHTMLFoundException(Exception):
+    def __init__(self,article_id):
+        super().__init__("No HTML found for article"+str(article_id))
+
+class URLiSFileException(Exception):
+    def __init__(self,article_id):
+        super().__init__("URL is file for article "+str(article_id))
+
+class BadStatusCodeException(Exception):
+    def __init__(self,article_id,status_code):
+        super().__init__("Bad status code "+str(status_code)+" for article "+str(article_id))
+
+class NoGPTResponseException(Exception):
+    def __init__(self,article_id):
+        super().__init__("No GPT response for article "+str(article_id))
+
+#-----------------Exceptions-----------------#
 
 class TTRSS:
     def __init__(self,config):
@@ -36,6 +55,8 @@ class TTRSS:
             "view_mode":"unread",
             "is_cat":"1"
         }
+
+
 
         self.MARK_AS_READ_BODY={
             "op":"updateArticle",
@@ -63,6 +84,9 @@ class TTRSS:
 
             
         }
+
+        self.scoring_metric=config['scoring_metric']
+        self.total_score=sum([vals for vals in self.scoring_metric["metric"].values()])
         
         with open(config['prompt_file'],'r') as f:
             self.prompt=f.read()
@@ -75,6 +99,7 @@ class TTRSS:
         
         
         self.anomalies_file=open(config['anomalies_file'],'a')
+        self.anomalies_file.write("----beginning of new run at "+str(datetime.now())+"--------\n")
 
 
 
@@ -229,7 +254,7 @@ class TTRSS:
         response=requests.post(self.endpoint,data=json.dumps(
             mark_as_read_body
                                             ))
-
+        print("MARK AS READ RESPONSE:"+str(response))
         return response
     
     def mark_as_unread(self,article_id):
@@ -243,6 +268,17 @@ class TTRSS:
 
         return response
 
+    def score_gpt_response(self,gpt_response):
+        score=0
+        metric_keys=self.scoring_metric["metric"].keys()
+        for field in gpt_response.keys():
+            if gpt_response[field]!="N/A" and field in metric_keys:
+                score += self.scoring_metric["metric"][field]
+
+        return score
+    
+        
+
     def process_unread(self,article_id):
 
         article=self.get_article(article_id)
@@ -250,15 +286,15 @@ class TTRSS:
         original_link=self.get_article_link_original(article_link)
         print("does it get here?" + original_link)
         html=self.make_request_with_session(original_link)
-        if html==None:
-            return
+        print("HTML:"+str(html))
+        if html is None:
+            raise NoHTMLFoundException(article_id)
         text=self.extract_text(html)
         print("TEXT:"+text)
         try:
             query_result=self.gpt_query(text)
             if query_result is None:
-                return 
-            # self.mark_as_read(article_id)
+                raise NoGPTResponseException(article_id)
             print("MARKED AS READ")
         except openai.error.InvalidRequestError:
 
@@ -276,6 +312,8 @@ class TTRSS:
                 except openai.error.InvalidRequestError as e:
                     print(len(text))
                     print(e)
+                    print("Invalid request error. Trying again with shorter text.")
+                    
                     continue
 
         query_result['Reference']=original_link
@@ -298,7 +336,8 @@ class TTRSS:
                                         timeline_of_activity=query_result['Timeline of Activity'],\
                                         summary=query_result['Summary'],\
                                         actor_motivation=query_result['Actor Motivation'],\
-                                        reference=query_result['Reference']
+                                        reference=query_result['Reference'],\
+                                        score=query_result['Score']\
                                             )
         print("MRKDWN:"+mrkdwn)
         return mrkdwn
@@ -313,15 +352,22 @@ class TTRSS:
         self.anomalies_file.write(str(article_id)+"\n")
         self.anomalies_file.write(str(error)+"\n")
         self.anomalies_file.write("--------------------\n")
+        self.mark_as_read(article_id)
+        #print traceback of error
+        print(error)
+        print(traceback.format_exc())
+        # exit()
         self.anomalies_file.flush()
 
 
     def job(self):
-        logging.debug("Starting job at "+str(datetime.datetime.now()))
+        logging.debug("Starting job at "+str(datetime.now()))
+        self.anomalies_file.write("Starting job at "+str(datetime.now())+"\n")
         self.session_id=self.login()
         unread_body=self.UNREAD_BODY
         unread_body['sid']=self.session_id
         headlines=self.get_headlines()
+        query_results=[] #DELETE THIS LATER
 
         batch=[]
         for headline in headlines:
@@ -329,18 +375,28 @@ class TTRSS:
                 print("HEADLINE and ID:"+str(headline)+str(headline['id']))
                 try:
                     query_result=self.process_unread(headline['id'])
+                    query_results.append(query_result)#DELETE THIS LATER
+                    
+                    result_score=self.score_gpt_response(query_result)
+                    if result_score<self.scoring_metric['threshold']:
+                        self.write_anomaly(headline['id'],"Score is below threshold at "+str(result_score))
+                        self.mark_as_read(headline['id'])
+                        continue
+
                 except Exception as e:
                     #HERE : in the future we should have a function that takes in the exception and does the hanndling.
                     logging.error(e)
                     self.mark_as_read(headline['id'])
                     self.write_anomaly(headline['id'],e)
                     continue
+                
                 if query_result is None: #way better idea is to wrap the whole thing in a try except for SyntaxError.
                     logging.error("Query result is None for article:"+str(headline['id']))
                     self.mark_as_read(headline['id'])
                     self.write_anomaly(headline['id'],"Query result is None")
                     continue
                 self.mark_as_read(headline['id'])
+                query_result['Score']=str(result_score)+"/"+str(self.total_score)
                 markdown=self.generate_mrkdwn(query_result)
                 # print("TEMPLATE MARKDOWN"+markdown)
                 batch.append(markdown)
@@ -348,6 +404,8 @@ class TTRSS:
 
             except NoLinksFoundException as e:
                 logging.error("[{}]No links found for article:".format(str(datetime.now()))+str(headline['id']))
+                self.mark_as_read(headline['id'])
+                self.write_anomaly(headline['id'],e)
                 # logging.error(traceback.format_exc())
                 continue # TODO: remove this
             # break #TODO: remove this
@@ -358,6 +416,9 @@ class TTRSS:
         print("BATCH:"+str(batch))
         self.message_zapier(batch_concat)
 
+        with open("responses_with_inference.json","w") as f: ##COMMENT this later
+            json.dump(query_results,f)
+
 
 
 def schedule_job(config,batch_mode=False):
@@ -366,7 +427,7 @@ def schedule_job(config,batch_mode=False):
         for message_time in config['message_times']:
             schedule.every().day.at(message_time).do(ttrss.job)
     else:
-        schedule.every().hour.do(ttrss.job)
+        schedule.every().minute.do(ttrss.job)
 
 
     while True:
@@ -378,8 +439,6 @@ def schedule_job(config,batch_mode=False):
         #sleep for 59.5 minutes
             time.sleep(3570)
 
-def score_article(self,gpt_response):
-    pass
 
 if __name__ =="__main__":
     logging.basicConfig(filename='TTRSS.log',level=logging.DEBUG)
@@ -413,6 +472,7 @@ if __name__ =="__main__":
         logging.error("[{}]Error in main:".format(str(datetime.now())))
         logging.error(traceback.format_exc())
         print("Error in main:"+str(e))
+        print(traceback.format_exc())
 
 
 
@@ -431,7 +491,12 @@ if __name__ =="__main__":
 #NOTE: better idea: DO THE MARK AS READ AFTER THE CALL TO THE PROCESS UNREAD FUNCTION, embed some logic there.
 #NOTE: We are getting 403 errors from some sites, including cisa.gov
 #NOTE: some urls are pdfs, we need to take this into account.
-
+#NOTE: picus library integration with mwalwares ISSUE
+#NOTE: slack mention region ISSUE
+#NOTE: infer location,industry
+#NOTE: added mark as read in write_anomaly, no need to call that whenever write_anomaly is called already.
+#NOTE: change anomalies to JSON format
+#NOTE: move errors to a separate file
             
     
 
