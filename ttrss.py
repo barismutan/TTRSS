@@ -439,8 +439,8 @@ class TTRSS:
 
         # self.message_zapier(batch_concat)
 
-        with open("responses_with_inference.json","w") as f: ##COMMENT this later
-            json.dump(query_results,f)
+        # with open("responses_with_inference.json","w") as f: ##COMMENT this later
+        #     json.dump(query_results,f)
 
 
 
