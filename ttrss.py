@@ -13,31 +13,10 @@ import traceback
 import ast
 from datetime import datetime
 import time
-
-#-----------------Exceptions-----------------#
-class NoLinksFoundException(Exception):
-    def __init__(self,article_id):
-        super().__init__("No links found for article "+str(article_id))
-
-class NoHTMLFoundException(Exception):
-    def __init__(self,article_id):
-        super().__init__("No HTML found for article"+str(article_id))
-
-class URLiSFileException(Exception):
-    def __init__(self,article_id):
-        super().__init__("URL is file for article "+str(article_id))
-
-class BadStatusCodeException(Exception):
-    def __init__(self,article_id,status_code):
-        super().__init__("Bad status code "+str(status_code)+" for article "+str(article_id))
-
-class NoGPTResponseException(Exception):
-    def __init__(self,article_id):
-        super().__init__("No GPT response for article "+str(article_id))
-
-#-----------------Exceptions-----------------#
+from ttrss_errors import *
 
 class TTRSS:
+
     def __init__(self,config):
         self.GPT_API_KEY=config['GPT_API_KEY']
         self.gpt_endpoint=config['gpt_endpoint']
@@ -111,9 +90,10 @@ class TTRSS:
         self.extract_link_callbacks=[self.get_read_more_href,self.get_last_body_href]
         # self.scoring_metric=config['scoring_metric']
 
-    def trim_text(self,text):
-        #return first 80% of text
-        return text[:int(len(text)*0.8)]
+
+
+
+##-----------------TTRSS API calls-----------------##
 
     def login(self):
         body = {
@@ -136,61 +116,6 @@ class TTRSS:
         response=requests.get(self.endpoint,data=json.dumps(body))
         return response.json()['content'][0] #they put the thing in an array for some reason
 
-    def get_article_link(self,article):
-        return article['link']
-
-    def extract_article_link_from_summary(self,summary_link):
-
-        response=self.make_request_with_session(summary_link)
-        if response==None:
-            raise NoLinksFoundException() #TODO: change this to a different exception
-        html=response.content.decode('utf-8') if response.status_code==200 \
-                                            else self.invoke_selenium(summary_link)
-        
-        for callback in self.extract_link_callbacks:
-            href=callback(html)
-            if href is not None:
-                print("HREF:"+href) 
-                return href
-            
-        raise NoLinksFoundException()
-
-    def get_last_body_href(self,html):
-        soup = BeautifulSoup(html, 'html.parser')
-        #get the div with the class "entry-content"
-        entry_content=soup.find('div',attrs={'class':'entry-content'})
-        #remove the div with class "crp_related" in the div
-        links = entry_content.select('a:not(div.crp_related a)')
-        print("LINKS:"+str(links))
-
-        if len(links)>0:
-            return links[-1]['href']
-        return None
-    
-        #NOTE: this can probably throw some exception, but I'm not sure what it would be.
-
-
-    def get_read_more_href(self,html):
-        pattern=r'Read more at.*?href="(.*?)"'
-        href=re.findall(pattern,html,re.DOTALL)
-        if len(href)==0:
-            return None
-        else:
-            return href[0]
-
-    def remove_excess_whitespace(self,text):
-        text=re.sub(r'\n',' ',text)
-        text=re.sub(r'\s+',' ',text)
-        text=re.sub(r'\t+',' ',text)
-        return text
-
-    def extract_text(self,html):
-        # print("HTML:"+html)
-        soup = BeautifulSoup(html.text, 'html.parser')
-        full_text=soup.get_text()
-        text=self.remove_excess_whitespace(full_text)
-        return text
-
     def get_headlines(self,category):
         body=self.UNREAD_BODY
         body['feed_id']=category
@@ -199,9 +124,34 @@ class TTRSS:
                 ))
         
         return response.json()['content']
+    
+    def mark_as_read(self,article_id): #idea: we can make this a class.
+        mark_as_read_body=self.MARK_AS_READ_BODY
+        mark_as_read_body['article_ids']=article_id
+        mark_as_read_body['sid']=self.session_id
 
-    def get_num_articles(self,headlines):
-        return len(headlines)
+        response=requests.post(self.endpoint,data=json.dumps(
+            mark_as_read_body
+                                            ))
+        print("MARK AS READ RESPONSE:"+str(response))
+        return response
+    
+    def mark_as_unread(self,article_id):
+        mark_as_unread_body=self.MARK_AS_UNREAD_BODY
+        mark_as_unread_body['article_ids']=article_id
+        mark_as_unread_body['sid']=self.session_id
+
+        response=requests.post(self.endpoint,data=json.dumps(
+            mark_as_unread_body
+                                            ))
+
+        return response
+
+##-----------------TTRSS API calls-----------------##
+
+
+
+##-----------------GPT calls-----------------##
 
     def gpt_query(self,article):
         # openai.api_key=self.GPT_API_KEY
@@ -230,6 +180,76 @@ class TTRSS:
         # completion_dict=json.loads(str(completion.choices[0]['message']['content']))
         return completion_dict
 
+    def score_gpt_response(self,gpt_response):
+        score=0
+        metric_keys=self.scoring_metric["metric"].keys()
+        for field in gpt_response.keys():
+            if gpt_response[field]!="N/A" and field in metric_keys:
+                score += self.scoring_metric["metric"][field]
+
+        return score
+
+##-----------------GPT calls-----------------##
+
+
+
+
+
+
+
+
+
+##-----------------Link Extractions-----------------## --> #TODO: move these to a different file
+
+    def extract_article_link_from_summary(self,summary_link):
+
+        response=self.make_request_with_session(summary_link)
+        if response==None:
+            raise NoLinksFoundException() #TODO: change this to a different exception
+        html=response.content.decode('utf-8') if response.status_code==200 \
+                                            else self.invoke_selenium(summary_link)
+        
+        for callback in self.extract_link_callbacks:
+            href=callback(html)
+            if href is not None:
+                print("HREF:"+href) 
+                return href
+            
+        raise NoLinksFoundException()
+
+    def get_last_body_href_databreaches(self,html): # this only works for databreaches.net
+        soup = BeautifulSoup(html, 'html.parser')
+        #get the div with the class "entry-content"
+        entry_content=soup.find('div',attrs={'class':'entry-content'})
+        #remove the div with class "crp_related" in the div
+        links = entry_content.select('a:not(div.crp_related a)')
+        print("LINKS:"+str(links))
+
+        if len(links)>0:
+            return links[-1]['href']
+        return None
+    
+        #NOTE: this can probably throw some exception, but I'm not sure what it would be.
+
+    def get_last_body_href_generic(self,html):
+
+        pass
+
+    def get_read_more_href(self,html):
+        pattern=r'Read more at.*?href="(.*?)"'
+        href=re.findall(pattern,html,re.DOTALL)
+        if len(href)==0:
+            return None
+        else:
+            return href[0]
+        
+##-----------------Link Extractions-----------------##
+
+
+##-----------------Utilities-----------------##
+    def get_num_articles(self,headlines):
+        return len(headlines)
+    
     def make_request_with_session(self,url):
         try:
             session=requests.Session()
@@ -251,85 +271,7 @@ class TTRSS:
         bs=BeautifulSoup(dr.page_source,'html.parser')
         html=bs.prettify()
         return html
-
-    def mark_as_read(self,article_id): #idea: we can make this a class.
-        mark_as_read_body=self.MARK_AS_READ_BODY
-        mark_as_read_body['article_ids']=article_id
-        mark_as_read_body['sid']=self.session_id
-
-        response=requests.post(self.endpoint,data=json.dumps(
-            mark_as_read_body
-                                            ))
-        print("MARK AS READ RESPONSE:"+str(response))
-        return response
     
-    def mark_as_unread(self,article_id):
-        mark_as_unread_body=self.MARK_AS_UNREAD_BODY
-        mark_as_unread_body['article_ids']=article_id
-        mark_as_unread_body['sid']=self.session_id
-
-        response=requests.post(self.endpoint,data=json.dumps(
-            mark_as_unread_body
-                                            ))
-
-        return response
-
-    def score_gpt_response(self,gpt_response):
-        score=0
-        metric_keys=self.scoring_metric["metric"].keys()
-        for field in gpt_response.keys():
-            if gpt_response[field]!="N/A" and field in metric_keys:
-                score += self.scoring_metric["metric"][field]
-
-        return score
-    
-        
-
-    def process_unread(self,article_id,article_category):
-
-        article=self.get_article(article_id)
-        if article_category==self.SUMMARY_CONTENT:
-            article_link=self.get_article_link(article)#NOTE: change function name to get_article_link_summary later...  
-            original_link=self.extract_article_link_from_summary(article_link)
-        else:
-            original_link=self.get_article_link(article)
-
-        print("does it get here?" + original_link)
-        html=self.make_request_with_session(original_link)
-        print("HTML:"+str(html))
-        if html is None:
-            raise NoHTMLFoundException(article_id)
-        text=self.extract_text(html)
-        print("TEXT:"+text)
-        try:
-            query_result=self.gpt_query(text)
-            if query_result is None:
-                raise NoGPTResponseException(article_id)
-            print("MARKED AS READ")
-        except openai.error.InvalidRequestError:
-
-            while True:
-                text=self.trim_text(text)
-                try:
-                    print("Trying again with shorter text")
-                    query_result=self.gpt_query(text)
-                    if query_result is None: 
-                        # break
-                        return # to not mark as read NEW
-                    self.mark_as_read(article_id)
-                    print("MARKED AS READ")
-                    break
-                except openai.error.InvalidRequestError as e:
-                    print(len(text))
-                    print(e)
-                    print("Invalid request error. Trying again with shorter text.")
-                    
-                    continue
-
-        query_result['Reference']=original_link
-        return query_result
-
-
     def generate_mrkdwn(self,query_result):
         print("QUERY RESULT:" +str(query_result))
         mrkdwn=self.mrkdwn_template.format(title=query_result['Title'],\
@@ -357,6 +299,20 @@ class TTRSS:
         response=requests.post(self.zapier_webhook,data=mrkdwn.encode('utf-8'))
         return response
 
+
+
+    def label_article_category(self,headlines,category): #NOTE: this is a workaround for the fact that the API does not return the category of the article rn.
+        for headline in headlines:
+            headline['category']=category
+        return headlines
+
+
+##-----------------Utilities-----------------##
+
+
+
+
+##-----------------Logging-----------------##
     def write_anomaly(self,article_id,error):
         self.anomalies_file.write(str(datetime.now())+"\n")
         self.anomalies_file.write(str(article_id)+"\n")
@@ -369,10 +325,55 @@ class TTRSS:
         # exit()
         self.anomalies_file.flush()
 
-    def label_article_category(self,headlines,category): #NOTE: this is a workaround for the fact that the API does not return the category of the article rn.
-        for headline in headlines:
-            headline['category']=category
-        return headlines
+##-----------------Logging-----------------##
+
+    
+##-----------------MAIN------------------##        
+
+    def process_unread(self,article_id,article_category):
+
+        article=self.get_article(article_id)
+        if article_category==self.SUMMARY_CONTENT:
+            article_link=self.get_article_link(article)#NOTE: change function name to get_article_link_summary later...  
+            original_link=self.extract_article_link_from_summary(article_link)
+        else:
+            original_link=self.get_article_link(article)
+
+        # print("does it get here?" + original_link)
+        html=self.make_request_with_session(original_link)
+        # print("HTML:"+str(html))
+        if html is None:
+            raise NoHTMLFoundException(article_id)
+        text=self.extract_text(html)
+        # print("TEXT:"+text)
+        try:
+            query_result=self.gpt_query(text)
+            if query_result is None:
+                raise NoGPTResponseException(article_id)
+            print("MARKED AS READ")
+        except openai.error.InvalidRequestError:
+
+            while True:
+                text=self.trim_text(text)
+                try:
+                    print("Trying again with shorter text")
+                    query_result=self.gpt_query(text)
+                    if query_result is None: 
+                        # break
+                        return # to not mark as read NEW
+                    self.mark_as_read(article_id)
+                    print("MARKED AS READ")
+                    break
+                except openai.error.InvalidRequestError as e:
+                    # print(len(text))
+                    print(e)
+                    print("Invalid request error. Trying again with shorter text.")
+                    
+                    continue
+
+        query_result['Reference']=original_link
+        return query_result
+
 
     def job(self):
         logging.debug("Starting job at "+str(datetime.now()))
@@ -462,6 +463,7 @@ def schedule_job(config,batch_mode=False):
         #sleep for 59.5 minutes
             time.sleep(3570)
 
+##-----------------MAIN------------------##
 
 if __name__ =="__main__":
     logging.basicConfig(filename='TTRSS.log',level=logging.DEBUG)
