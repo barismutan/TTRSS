@@ -243,6 +243,8 @@ class TTRSS:
         else:
             return href[0]
         
+    
+        
 ##-----------------Link Extractions-----------------##
 
 
@@ -464,6 +466,8 @@ def schedule_job(config,batch_mode=False):
             time.sleep(3570)
 
 ##-----------------MAIN------------------##
+
+
 
 if __name__ =="__main__":
     logging.basicConfig(filename='TTRSS.log',level=logging.DEBUG)
