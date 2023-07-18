@@ -1,7 +1,7 @@
 #-----------------Exceptions-----------------#
 class NoLinksFoundException(Exception):
     def __init__(self,article_id):
-        super().__init__("No links found for article "+str(article_id))
+        super().__init__("No links found for article <"+str(article_id)+">") # <> is for debugging rn
 
 class NoHTMLFoundException(Exception):
     def __init__(self,article_id):

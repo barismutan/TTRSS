@@ -87,7 +87,23 @@ class TTRSS:
         self.session_id=self.login()
         openai.api_key=self.GPT_API_KEY
 
-        self.extract_link_callbacks=[self.get_read_more_href,self.get_last_body_href]
+        self.extract_link_callbacks=[
+            self.get_read_more_href,
+            self.get_last_body_href_generic
+            ]
+        
+        self.preprocess_html_callbacks=[
+            self.remove_head,
+            self.remove_scripts,
+            self.remove_styles,
+            self.remove_header,
+            self.remove_footer,
+            self.remove_navbar,
+            self.remove_ads,
+            
+            self.remove_meta
+            ]
+        #TODO: i already wrote specific one for datareaches.net, might as well include it later...
         # self.scoring_metric=config['scoring_metric']
 
 
@@ -103,7 +119,7 @@ class TTRSS:
         }
         response=requests.get(self.endpoint,data=json.dumps(body))
         response_content=response.json()['content']
-        print(response_content)
+        #print(response_content)
 
         return response_content['session_id']
 
@@ -133,7 +149,7 @@ class TTRSS:
         response=requests.post(self.endpoint,data=json.dumps(
             mark_as_read_body
                                             ))
-        print("MARK AS READ RESPONSE:"+str(response))
+        #print("MARK AS READ RESPONSE:"+str(response))
         return response
     
     def mark_as_unread(self,article_id):
@@ -156,9 +172,9 @@ class TTRSS:
     def gpt_query(self,article):
         # openai.api_key=self.GPT_API_KEY
         prompt=self.prompt+article
-        # print("Prompt:"+prompt)
-        # print("ARTICLE:"+article)
-        # print(openai.api_key)
+        # #print("Prompt:"+prompt)
+        # #print("ARTICLE:"+article)
+        # #print(openai.api_key)
         # return
         logging.debug("Querying GPT-3.5 Turbo.")
         completion = openai.ChatCompletion.create(
@@ -170,7 +186,7 @@ class TTRSS:
         ],
     timeout=30
     )
-        print("Completion:\n"+str(completion))
+        #print("Completion:\n"+str(completion))
         try:
             completion_dict=ast.literal_eval(str(completion.choices[0]['message']['content']))
         except SyntaxError as e:
@@ -205,17 +221,22 @@ class TTRSS:
 
         response=self.make_request_with_session(summary_link)
         if response==None:
-            raise NoLinksFoundException() #TODO: change this to a different exception
+            raise NoLinksFoundException(summary_link) #TODO: change this to a different exception
         html=response.content.decode('utf-8') if response.status_code==200 \
                                             else self.invoke_selenium(summary_link)
-        
+        # #print("EXTRACTING LINK FROM FOLLOWING HTML: ------------------\n"+html+"\n------------------")  
+        html=self.preprocess_html(html)
+
         for callback in self.extract_link_callbacks:
             href=callback(html)
             if href is not None:
-                print("HREF:"+href) 
+                #print("EXTRACTED HREF:"+href) 
+                href=self.remove_excess_whitespace(href)
                 return href
-            
-        raise NoLinksFoundException()
+        #print("NO LINKS FOUND IN FOLLOWING HTML: ------------------\n"+html+"\n------------------")  
+        with open("error.html","w") as f:
+            f.write(html)
+        raise NoLinksFoundException(summary_link)
 
     def get_last_body_href_databreaches(self,html): # this only works for databreaches.net
         soup = BeautifulSoup(html, 'html.parser')
@@ -223,7 +244,7 @@ class TTRSS:
         entry_content=soup.find('div',attrs={'class':'entry-content'})
         #remove the div with class "crp_related" in the div
         links = entry_content.select('a:not(div.crp_related a)')
-        print("LINKS:"+str(links))
+        #print("LINKS:"+str(links))
 
         if len(links)>0:
             return links[-1]['href']
@@ -232,8 +253,29 @@ class TTRSS:
         #NOTE: this can probably throw some exception, but I'm not sure what it would be.
 
     def get_last_body_href_generic(self,html):
+        soup = BeautifulSoup(html, 'html.parser')
+        #print("CALLING GET LAST BODY HREF GENERIC")
+        #get the outermost div within the body
+        body=soup.find('body')
+        #get the last link in the body
+        links = body.select('a')
+        #print("LINKS:"+str(links))
+        logging.debug("LINKS:"+str(links))
 
-        pass
+        if len(links)>0:
+            last_link_index=len(links)-1
+            last_link=links[last_link_index]
+            while last_link.has_attr('href')==False or  not last_link['href'].startswith('http'): #this can be reworked later...
+                last_link=links[last_link_index]
+                last_link_index-=1
+
+                if last_link_index<0:
+                    break
+        
+        if last_link_index<0:
+            return None
+        else:
+            return last_link['href']
 
     def get_read_more_href(self,html):
         pattern=r'Read more at.*?href="(.*?)"'
@@ -247,6 +289,72 @@ class TTRSS:
         
 ##-----------------Link Extractions-----------------##
 
+##-----------------Text Preprocessing-----------------##
+    def preprocess_html(self,html):
+        for callback in self.preprocess_html_callbacks:
+            #print("Calling callback: "+str(callback))
+            html=callback(html)
+        return html
+    
+    def trim_text(self,text):
+        #return first 80% of text
+        return text[:int(len(text)*0.8)]
+
+    def get_article_link(self,article):
+        return article['link']
+
+    def remove_excess_whitespace(self,text):
+        text=re.sub(r'\n+',' ',text)
+        text=re.sub(r'\s+',' ',text)
+        text=re.sub(r'\t+',' ',text)
+        return text
+
+    def remove_header(self,text):
+        text=re.sub(r'<header.*?</header>','',text,flags=re.DOTALL)
+        return text
+
+    def remove_footer(self,text):
+        text=re.sub(r'<footer.*?</footer>','',text,flags=re.DOTALL)
+        return text
+
+    def remove_navbar(self,text):
+        text=re.sub(r'<nav.*?</nav>','',text,flags=re.DOTALL)
+        return text
+
+    def remove_ads(self,text):
+        text=re.sub(r'<ins.*?</ins>','',text,flags=re.DOTALL)
+        return text
+
+    def remove_scripts(self,text):
+        text=re.sub(r'<script.*?</script>','',text,flags=re.DOTALL)
+        return text
+
+    def remove_styles(self,text):
+        text=re.sub(r'<style.*?</style>','',text,flags=re.DOTALL)
+        return text
+    
+    def remove_head(self,text):
+        #debugging#
+        # match=re.search(r'<head.*?</head>',text,flags=re.DOTALL)
+        # if match:
+        #     #print("MATCH:"+match.group(0))
+        text=re.sub(r'<head.*?</head>','',text,flags=re.DOTALL)
+        return text
+    
+    def remove_meta(self,text):
+        text=re.sub(r'<meta.*?>','',text,flags=re.DOTALL)
+        return text
+
+
+    def extract_text(self,html):
+        # #print("HTML:"+html)
+        soup = BeautifulSoup(html.text, 'html.parser')
+        full_text=soup.get_text()
+        text=self.remove_excess_whitespace(full_text)
+        return text
+
+##-----------------Text Preprocessing-----------------##
+
 
 ##-----------------Utilities-----------------##
     def get_num_articles(self,headlines):
@@ -257,14 +365,14 @@ class TTRSS:
             session=requests.Session()
 
             response=session.get(url,headers=self.EXTERNAL_HEADERS,timeout=10)
-            print("MAKE REQUEST WITH SESSION RESPONSE:"+str(response))
+            #print("MAKE REQUEST WITH SESSION RESPONSE:"+str(response))
         except requests.exceptions.MissingSchema as e:
             logging.error("Missing schema:"+str(e))
             return None
         except requests.exceptions.ReadTimeout as e:
             logging.error("Read timeout:"+str(e))
             return None
-        # print("Response:"+str(response))
+        # #print("Response:"+str(response))
         return response
 
     def invoke_selenium(self,url):
@@ -275,7 +383,7 @@ class TTRSS:
         return html
     
     def generate_mrkdwn(self,query_result):
-        print("QUERY RESULT:" +str(query_result))
+        #print("QUERY RESULT:" +str(query_result))
         mrkdwn=self.mrkdwn_template.format(title=query_result['Title'],\
                                         organization=query_result['Victim Organization'],\
                                         location=query_result['Victim Location'],\
@@ -293,7 +401,7 @@ class TTRSS:
                                         reference=query_result['Reference'],\
                                         score=query_result['Score']\
                                             )
-        print("MRKDWN:"+mrkdwn)
+        #print("MRKDWN:"+mrkdwn)
         return mrkdwn
 
     def message_zapier(self,mrkdwn):
@@ -321,9 +429,9 @@ class TTRSS:
         self.anomalies_file.write(str(error)+"\n")
         self.anomalies_file.write("--------------------\n")
         self.mark_as_read(article_id)
-        #print traceback of error
-        print(error)
-        print(traceback.format_exc())
+        ##print traceback of error
+        #print(error)
+        #print(traceback.format_exc())
         # exit()
         self.anomalies_file.flush()
 
@@ -341,35 +449,35 @@ class TTRSS:
         else:
             original_link=self.get_article_link(article)
 
-        # print("does it get here?" + original_link)
+        # #print("does it get here?" + original_link)
         html=self.make_request_with_session(original_link)
-        # print("HTML:"+str(html))
+        # #print("HTML:"+str(html))
         if html is None:
             raise NoHTMLFoundException(article_id)
         text=self.extract_text(html)
-        # print("TEXT:"+text)
+        # #print("TEXT:"+text)
         try:
             query_result=self.gpt_query(text)
             if query_result is None:
                 raise NoGPTResponseException(article_id)
-            print("MARKED AS READ")
+            #print("MARKED AS READ")
         except openai.error.InvalidRequestError:
 
             while True:
                 text=self.trim_text(text)
                 try:
-                    print("Trying again with shorter text")
+                    #print("Trying again with shorter text")
                     query_result=self.gpt_query(text)
                     if query_result is None: 
                         # break
                         return # to not mark as read NEW
                     self.mark_as_read(article_id)
-                    print("MARKED AS READ")
+                    #print("MARKED AS READ")
                     break
                 except openai.error.InvalidRequestError as e:
-                    # print(len(text))
-                    print(e)
-                    print("Invalid request error. Trying again with shorter text.")
+                    # #print(len(text))
+                    #print(e)
+                    #print("Invalid request error. Trying again with shorter text.")
                     
                     continue
 
@@ -397,7 +505,7 @@ class TTRSS:
         batch=[]
         for headline in headlines:
             try:
-                print("HEADLINE and ID:"+str(headline)+str(headline['id']))
+                #print("HEADLINE and ID:"+str(headline)+str(headline['id']))
                 try:
                     query_result=self.process_unread(headline['id'],headline['category'])
                     query_results.append(query_result)#DELETE THIS LATER
@@ -423,12 +531,12 @@ class TTRSS:
                 self.mark_as_read(headline['id'])
                 query_result['Score']=str(result_score)+"/"+str(self.total_score)
                 markdown=self.generate_mrkdwn(query_result)
-                # print("TEMPLATE MARKDOWN"+markdown)
+                # #print("TEMPLATE MARKDOWN"+markdown)
                 batch.append(markdown)
-                print("BATCH in for:"+str(batch))
+                #print("BATCH in for:"+str(batch))
 
             except NoLinksFoundException as e:
-                logging.error("[{}]No links found for article:".format(str(datetime.now()))+str(headline['id']))
+                logging.error("[{}]No links found for article:".format(str(datetime.now()))+"<"+str(headline['id'])+">")
                 self.mark_as_read(headline['id'])
                 self.write_anomaly(headline['id'],e)
                 # logging.error(traceback.format_exc())
@@ -437,8 +545,8 @@ class TTRSS:
 
         #concatenate batch with newlines
         batch_concat='\n'.join(batch)
-        print("BATCH CONCAT:"+batch_concat)
-        print("BATCH:"+str(batch))
+        #print("BATCH CONCAT:"+batch_concat)
+        #print("BATCH:"+str(batch))
 
         # self.message_zapier(batch_concat)
 
@@ -500,8 +608,8 @@ if __name__ =="__main__":
     except Exception as e:
         logging.error("[{}]Error in main:".format(str(datetime.now())))
         logging.error(traceback.format_exc())
-        print("Error in main:"+str(e))
-        print(traceback.format_exc())
+        # print("Error in main:"+str(e))
+        # print(traceback.format_exc())
 
 
 
@@ -530,4 +638,12 @@ if __name__ =="__main__":
 #NOTE: id : 1 --> FullContent || id : 2 --> Summary Content            
     
 
+##NOTE: I moved the following to FullContent:
+#bleepingcomputer.com
+#helpnetsecurity.com
+#theregister.com
+#thehackernews.com
+#securityweek.com
+#hackread.com
+#thecyberwire.com
 
