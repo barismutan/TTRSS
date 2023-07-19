@@ -123,7 +123,7 @@ class TTRSS:
         }
         response=requests.get(self.endpoint,data=json.dumps(body))
         response_content=response.json()['content']
-        #print(response_content)
+        
 
         return response_content['session_id']
 
@@ -153,7 +153,7 @@ class TTRSS:
         response=requests.post(self.endpoint,data=json.dumps(
             mark_as_read_body
                                             ))
-        #print("MARK AS READ RESPONSE:"+str(response))
+        
         return response
     
     def mark_as_unread(self,article_id):
@@ -183,15 +183,11 @@ class TTRSS:
 
 
     def gpt_query(self,article):
-        # openai.api_key=self.GPT_API_KEY
         prompt=self.prompt+article
-        # #print("Prompt:"+prompt)
-        # #print("ARTICLE:"+article)
-        # #print(openai.api_key)
-        # return
+
         logging.debug("Querying GPT-3.5 Turbo.")
         completion = self.make_single_gpt_query(prompt)
-        #print("Completion:\n"+str(completion))
+        
         try:
             completion_dict=ast.literal_eval(str(completion.choices[0]['message']['content']))
         except SyntaxError as e:
@@ -208,7 +204,7 @@ class TTRSS:
                     article=self.trim_text(article)
                     prompt=self.prompt+article ##NEW: trim the article and try again in case of invalid json.
                     continue
-            return None
+            return completion_dict
         # completion_dict=json.loads(str(completion.choices[0]['message']['content']))
         return completion_dict
 
@@ -242,16 +238,16 @@ class TTRSS:
             raise NoLinksFoundException(summary_link) #TODO: change this to a different exception
         html=response.content.decode('utf-8') if response.status_code==200 \
                                             else self.invoke_selenium(summary_link)
-        # #print("EXTRACTING LINK FROM FOLLOWING HTML: ------------------\n"+html+"\n------------------")  
+        # 
         html=self.preprocess_html(html)
 
         for callback in self.extract_link_callbacks:
             href=callback(html)
             if href is not None:
-                #print("EXTRACTED HREF:"+href) 
+                
                 href=self.remove_excess_whitespace(href)
                 return href
-        #print("NO LINKS FOUND IN FOLLOWING HTML: ------------------\n"+html+"\n------------------")  
+        
         with open("error.html","w") as f:
             f.write(html)
         raise NoLinksFoundException(summary_link)
@@ -262,7 +258,7 @@ class TTRSS:
         entry_content=soup.find('div',attrs={'class':'entry-content'})
         #remove the div with class "crp_related" in the div
         links = entry_content.select('a:not(div.crp_related a)')
-        #print("LINKS:"+str(links))
+        
 
         if len(links)>0:
             return links[-1]['href']
@@ -272,12 +268,12 @@ class TTRSS:
 
     def get_last_body_href_generic(self,html):
         soup = BeautifulSoup(html, 'html.parser')
-        #print("CALLING GET LAST BODY HREF GENERIC")
+        
         #get the outermost div within the body
         body=soup.find('body')
         #get the last link in the body
         links = body.select('a')
-        #print("LINKS:"+str(links))
+        
         logging.debug("LINKS:"+str(links))
 
         if len(links)>0:
@@ -310,7 +306,7 @@ class TTRSS:
 ##-----------------Text Preprocessing-----------------##
     def preprocess_html(self,html):
         for callback in self.preprocess_html_callbacks:
-            #print("Calling callback: "+str(callback))
+            
             html=callback(html)
         return html
     
@@ -351,11 +347,7 @@ class TTRSS:
         text=re.sub(r'<style.*?</style>','',text,flags=re.DOTALL)
         return text
     
-    def remove_head(self,text):
-        #debugging#
-        # match=re.search(r'<head.*?</head>',text,flags=re.DOTALL)
-        # if match:
-        #     #print("MATCH:"+match.group(0))
+    def remove_head(self,text):  
         text=re.sub(r'<head.*?</head>','',text,flags=re.DOTALL)
         return text
     
@@ -365,7 +357,7 @@ class TTRSS:
 
 
     def extract_text(self,html):
-        # #print("HTML:"+html)
+        # 
         soup = BeautifulSoup(html.text, 'html.parser')
         full_text=soup.get_text()
         text=self.remove_excess_whitespace(full_text)
@@ -378,19 +370,32 @@ class TTRSS:
     def get_num_articles(self,headlines):
         return len(headlines)
     
+    def add_reference(self,query_result,reference):
+        query_result['Reference']=reference
+        return query_result
+    
+    def add_score(self,query_result,score):
+        query_result['Score']=str(score)+"/"+str(self.total_score)
+        return query_result
+    
+    def add_region(self,query_result,region):
+        query_result['Region']=region
+        return query_result
+    
+    
     def make_request_with_session(self,url):
         try:
             session=requests.Session()
 
             response=session.get(url,headers=self.EXTERNAL_HEADERS,timeout=10)
-            #print("MAKE REQUEST WITH SESSION RESPONSE:"+str(response))
+            
         except requests.exceptions.MissingSchema as e:
             logging.error("Missing schema:"+str(e))
             return None
         except requests.exceptions.ReadTimeout as e:
             logging.error("Read timeout:"+str(e))
             return None
-        # #print("Response:"+str(response))
+        # 
         return response
 
     def invoke_selenium(self,url):
@@ -401,7 +406,7 @@ class TTRSS:
         return html
     
     def generate_mrkdwn(self,query_result):
-        #print("QUERY RESULT:" +str(query_result))
+        
         mrkdwn=self.mrkdwn_template.format(title=query_result['Title'],\
                                         organization=query_result['Victim Organization'],\
                                         location=query_result['Victim Location'],\
@@ -420,7 +425,7 @@ class TTRSS:
                                         score=query_result['Score'],\
                                         region=query_result['Region'],\
                                             )
-        #print("MRKDWN:"+mrkdwn)
+        
         return mrkdwn
 
     def message_zapier(self,mrkdwn):
@@ -459,8 +464,8 @@ class TTRSS:
         self.anomalies_file.write("--------------------\n")
         self.mark_as_read(article_id)
         ##print traceback of error
-        #print(error)
-        #print(traceback.format_exc())
+        
+        
         # exit()
         self.anomalies_file.flush()
 
@@ -478,49 +483,40 @@ class TTRSS:
         else:
             original_link=self.get_article_link(article)
 
-        # #print("does it get here?" + original_link)
+        
         html=self.make_request_with_session(original_link)
-        # #print("HTML:"+str(html))
+        
         if html is None:
             raise NoHTMLFoundException(article_id)
         text=self.extract_text(html)
-        # #print("TEXT:"+text)
+
         try:
             query_result=self.gpt_query(text)
             if query_result is None:
                 raise NoGPTResponseException(article_id)
-            #print("MARKED AS READ")
+
         except openai.error.InvalidRequestError:
 
             while True:
                 text=self.trim_text(text)
                 try:
-                    #print("Trying again with shorter text")
+                    
                     query_result=self.gpt_query(text)
                     if query_result is None: 
-                        # break
+
                         return # to not mark as read NEW
                     self.mark_as_read(article_id)
-                    #print("MARKED AS READ")
+
                     break
                 except openai.error.InvalidRequestError as e:
-                    # #print(len(text))
-                    #print(e)
-                    #print("Invalid request error. Trying again with shorter text.")
+
                     
                     continue
 
-        query_result['Reference']=original_link
+        query_result=self.add_reference(query_result,original_link)
         return query_result
 
-
-    def job(self):
-        logging.debug("Starting job at "+str(datetime.now()))
-        self.anomalies_file.write("Starting job at "+str(datetime.now())+"\n")
-        self.session_id=self.login()
-        unread_body=self.UNREAD_BODY
-        unread_body['sid']=self.session_id
-
+    def fetch_and_label_headlines(self):
         headlines_full_content=self.get_headlines(category=self.FULL_CONTENT)
         headlines_summary_content=self.get_headlines(category=self.SUMMARY_CONTENT)
 
@@ -528,6 +524,17 @@ class TTRSS:
         headlines_summary_content=self.label_article_category(headlines_summary_content,self.SUMMARY_CONTENT)
 
         headlines=headlines_full_content+headlines_summary_content
+        return headlines
+
+    def job(self):
+
+        logging.debug("Starting job at "+str(datetime.now()))
+        self.anomalies_file.write("Starting job at "+str(datetime.now())+"\n")
+        self.session_id=self.login()
+        unread_body=self.UNREAD_BODY
+        unread_body['sid']=self.session_id
+
+        headlines=self.fetch_and_label_headlines()
         
         query_results=[] #DELETE THIS LATER
 
@@ -535,11 +542,11 @@ class TTRSS:
 
         for headline in headlines:
             try:
-                #print("HEADLINE and ID:"+str(headline)+str(headline['id']))
+                
                 try:
                     query_result=self.process_unread(headline['id'],headline['category'])
-                    query_results.append(query_result)#DELETE THIS LATER
-                    count+=1
+                    # query_results.append(query_result)#DELETE THIS LATER
+
                     
                     result_score=self.score_gpt_response(query_result)
                     if result_score<self.scoring_metric['threshold']:
@@ -559,29 +566,35 @@ class TTRSS:
                     self.mark_as_read(headline['id'])
                     self.write_anomaly(headline['id'],"Query result is None")
                     continue
+
                 self.mark_as_read(headline['id'])
-                query_result['Score']=str(result_score)+"/"+str(self.total_score)
-                query_result['Region']=self.map_country_to_region(query_result['Victim Location'])
-                print("QUERY RESULT:"+str(query_result))
+
+                query_result=self.add_score(query_result)
+
+                assigned_regions=self.map_country_to_region(query_result['Victim Location'])
+                query_result=self.add_region(query_result,assigned_regions)
+                
+
+
                 markdown=self.generate_mrkdwn(query_result)
-                # #print("TEMPLATE MARKDOWN"+markdown)
+
                 batch.append(markdown)
-                #print("BATCH in for:"+str(batch))
+                
 
             except NoLinksFoundException as e:
                 logging.error("[{}]No links found for article:".format(str(datetime.now()))+"<"+str(headline['id'])+">")
                 self.mark_as_read(headline['id'])
                 self.write_anomaly(headline['id'],e)
-                # logging.error(traceback.format_exc())
+
                 continue # TODO: remove this
-            # break #TODO: remove this
+
 
         #concatenate batch with newlines
         batch_concat='\n'.join(batch)
-        #print("BATCH CONCAT:"+batch_concat)
-        #print("BATCH:"+str(batch))
+        
+        
 
-        # self.message_zapier(batch_concat)
+        self.message_zapier(batch_concat)
 
         # with open("responses_with_inference.json","w") as f: ##COMMENT this later
         #     json.dump(query_results,f)
@@ -608,10 +621,11 @@ def schedule_job(config,batch_mode=False):
 
 ##-----------------MAIN------------------##
 
-
+def clear_log(log_file):
+    open(log_file,'w').close()
 
 if __name__ =="__main__":
-    logging.basicConfig(filename='TTRSS.log',level=logging.DEBUG)
+
     parser = argparse.ArgumentParser(description='Process some integers.')
     parser.add_argument('--config', dest='config', default='config.json',
                         help='config file path', required=True)
@@ -622,14 +636,28 @@ if __name__ =="__main__":
     parser.add_argument('--batch', dest='batch',
                         help='Specify whether to run in batch mode (send all articles at given intervals.)',required=False)
     
+    parser.add_argument('--log_file',dest='log_file',help='Specify the log file path.',required=True)
+    
+    parser.add_argument('--clearlogs',dest='clear',help='Specify whether to clear the log file before starting.',required=False,default='false')
 
     
-    logging.info("[{}]Starting TTRSS".format(str(datetime.now())))
+    
+
     args = parser.parse_args()
+    logging.info("[{}]Starting TTRSS".format(str(datetime.now())))
+    logging.basicConfig(filename=args.log_file,level=logging.DEBUG)
+
     with open(args.config) as f:
         config=json.load(f)
 
-    logging.info("[{}]Starting TTRSS".format(str(datetime.now())))
+    if args.clear=="true":
+        clear_log(args.log_file)
+    elif args.clear=="false":
+        pass
+    else:
+        print("Invalid argument for --clearlogs, must be true or false")
+        exit()
+
     try:
         if args.test=="true":
             ttrss=TTRSS(config)
@@ -641,8 +669,6 @@ if __name__ =="__main__":
     except Exception as e:
         logging.error("[{}]Error in main:".format(str(datetime.now())))
         logging.error(traceback.format_exc())
-        # print("Error in main:"+str(e))
-        # print(traceback.format_exc())
 
 
 
