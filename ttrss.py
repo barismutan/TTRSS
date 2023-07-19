@@ -107,6 +107,9 @@ class TTRSS:
             
             self.remove_meta
             ]
+        
+        self.test_mode=config['test_mode']
+
         #TODO: i already wrote specific one for datareaches.net, might as well include it later...
         # self.scoring_metric=config['scoring_metric']
 
@@ -146,6 +149,8 @@ class TTRSS:
         return response.json()['content']
     
     def mark_as_read(self,article_id): #idea: we can make this a class.
+        if self.test_mode: #don't mark as read if we are in test mode
+            return
         mark_as_read_body=self.MARK_AS_READ_BODY
         mark_as_read_body['article_ids']=article_id
         mark_as_read_body['sid']=self.session_id
@@ -173,12 +178,14 @@ class TTRSS:
 
 ##-----------------GPT calls-----------------##
     def make_single_gpt_query(self,prompt):
+        
+        model = "text-davinci-001" if self.test_mode else self.gpt_config['model'] #using cheaper model for testing purposes...
+        messages=self.gpt_config['messages']
+        messages[0]['content']=prompt
         return openai.ChatCompletion.create(
-            model="gpt-3.5-turbo-16k",
-            messages=[
-            {"role": "assistant", "content": prompt}
-            ],
-            timeout=30
+            model=model,
+            messages=messages,
+            timeout=self.gpt_config['timeout']
     )
 
 
@@ -429,6 +436,9 @@ class TTRSS:
         return mrkdwn
 
     def message_zapier(self,mrkdwn):
+        if self.test_mode:
+            print(mrkdwn)
+            return
         #make the post request, encode mrkdwn as utf-8
         response=requests.post(self.zapier_webhook,data=mrkdwn.encode('utf-8'))
         return response
@@ -545,7 +555,8 @@ class TTRSS:
                 
                 try:
                     query_result=self.process_unread(headline['id'],headline['category'])
-                    # query_results.append(query_result)#DELETE THIS LATER
+                    if self.test_mode:
+                        query_results.append(query_result)#DELETE THIS LATER
 
                     
                     result_score=self.score_gpt_response(query_result)
@@ -596,8 +607,9 @@ class TTRSS:
 
         self.message_zapier(batch_concat)
 
-        # with open("responses_with_inference.json","w") as f: ##COMMENT this later
-        #     json.dump(query_results,f)
+        if self.test_mode:
+            with open("test_results/result_{}.json".format(datetime.now()),"w") as f: ##COMMENT this later
+                json.dump(query_results,f)
 
 
 
@@ -644,8 +656,9 @@ if __name__ =="__main__":
     
 
     args = parser.parse_args()
-    logging.info("[{}]Starting TTRSS".format(str(datetime.now())))
-    logging.basicConfig(filename=args.log_file,level=logging.DEBUG)
+    logging.basicConfig(filename=args.log_file,level=logging.DEBUG,format='[%(asctime)s] %(message)s')
+    logging.INFO("Starting TTRSS with the following parameters:{}\n".format(str(args))+"\n")
+
 
     with open(args.config) as f:
         config=json.load(f)
@@ -660,9 +673,11 @@ if __name__ =="__main__":
 
     try:
         if args.test=="true":
+            config['test_mode']=True
             ttrss=TTRSS(config)
             ttrss.job()
         elif args.test=="false":
+            config['test_mode']=False
             schedule_job(config,args.batch)
         else:
             print("Invalid argument for --test, must be true or false")
@@ -706,4 +721,10 @@ if __name__ =="__main__":
 #hackread.com
 #thecyberwire.com
 #threatpost.com
+
+
+#ideas for refactoring:
+#1. move TTRSS API calls to a separate class
+#2. move GPT calls to a separate class
+#3. move text preprocessing & link extraction to a separate class
 
