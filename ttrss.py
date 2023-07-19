@@ -76,6 +76,10 @@ class TTRSS:
         with open(config['mrkdwn_template'],'r') as f:
             self.mrkdwn_template=f.read()
         
+        with open(config['country_region_mapping'],'r') as f:
+            self.country_region_mapping=json.load(f)
+        
+        
         
         self.anomalies_file=open(config['anomalies_file'],'a')
         self.anomalies_file.write("----beginning of new run at "+str(datetime.now())+"--------\n")
@@ -168,6 +172,15 @@ class TTRSS:
 
 
 ##-----------------GPT calls-----------------##
+    def make_single_gpt_query(self,prompt):
+        return openai.ChatCompletion.create(
+            model="gpt-3.5-turbo-16k",
+            messages=[
+            {"role": "assistant", "content": prompt}
+            ],
+            timeout=30
+    )
+
 
     def gpt_query(self,article):
         # openai.api_key=self.GPT_API_KEY
@@ -177,21 +190,24 @@ class TTRSS:
         # #print(openai.api_key)
         # return
         logging.debug("Querying GPT-3.5 Turbo.")
-        completion = openai.ChatCompletion.create(
-    model="gpt-3.5-turbo",
-    messages=[
-
-            {"role": "assistant", "content": prompt}
-
-        ],
-    timeout=30
-    )
+        completion = self.make_single_gpt_query(prompt)
         #print("Completion:\n"+str(completion))
         try:
             completion_dict=ast.literal_eval(str(completion.choices[0]['message']['content']))
         except SyntaxError as e:
             logging.error("Syntax error (Probably caused by GPT response.):"+str(e))
             logging.error("GPT response:"+str(completion))
+            while True:
+                try:
+                    completion = self.make_single_gpt_query(prompt)
+                    completion_dict=ast.literal_eval(str(completion.choices[0]['message']['content']))
+                    break
+                except SyntaxError as e:
+                    logging.error("Syntax error (Probably caused by GPT response.):"+str(e))
+                    logging.error("GPT response:"+str(completion))
+                    article=self.trim_text(article)
+                    prompt=self.prompt+article ##NEW: trim the article and try again in case of invalid json.
+                    continue
             return None
         # completion_dict=json.loads(str(completion.choices[0]['message']['content']))
         return completion_dict
@@ -199,6 +215,8 @@ class TTRSS:
     def score_gpt_response(self,gpt_response):
         score=0
         metric_keys=self.scoring_metric["metric"].keys()
+        if gpt_response==None:
+            return -1 #indicates error
         for field in gpt_response.keys():
             if gpt_response[field]!="N/A" and field in metric_keys:
                 score += self.scoring_metric["metric"][field]
@@ -399,7 +417,8 @@ class TTRSS:
                                         summary=query_result['Summary'],\
                                         actor_motivation=query_result['Actor Motivation'],\
                                         reference=query_result['Reference'],\
-                                        score=query_result['Score']\
+                                        score=query_result['Score'],\
+                                        region=query_result['Region'],\
                                             )
         #print("MRKDWN:"+mrkdwn)
         return mrkdwn
@@ -415,6 +434,16 @@ class TTRSS:
         for headline in headlines:
             headline['category']=category
         return headlines
+    
+    def map_country_to_region(self,country):
+        try:
+            return self.country_region_mapping[country]
+        except KeyError:
+            return "Unmapped"
+        except TypeError:
+            if type(country)==list:
+                return "" + ",".join([self.map_country_to_region(c) for c in country])
+
 
 
 ##-----------------Utilities-----------------##
@@ -503,12 +532,14 @@ class TTRSS:
         query_results=[] #DELETE THIS LATER
 
         batch=[]
+
         for headline in headlines:
             try:
                 #print("HEADLINE and ID:"+str(headline)+str(headline['id']))
                 try:
                     query_result=self.process_unread(headline['id'],headline['category'])
                     query_results.append(query_result)#DELETE THIS LATER
+                    count+=1
                     
                     result_score=self.score_gpt_response(query_result)
                     if result_score<self.scoring_metric['threshold']:
@@ -530,6 +561,8 @@ class TTRSS:
                     continue
                 self.mark_as_read(headline['id'])
                 query_result['Score']=str(result_score)+"/"+str(self.total_score)
+                query_result['Region']=self.map_country_to_region(query_result['Victim Location'])
+                print("QUERY RESULT:"+str(query_result))
                 markdown=self.generate_mrkdwn(query_result)
                 # #print("TEMPLATE MARKDOWN"+markdown)
                 batch.append(markdown)
@@ -646,4 +679,5 @@ if __name__ =="__main__":
 #securityweek.com
 #hackread.com
 #thecyberwire.com
+#threatpost.com
 
