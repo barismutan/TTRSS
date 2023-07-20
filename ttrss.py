@@ -592,7 +592,7 @@ class TTRSS:
 
         for headline in headlines:
             try:
-                if test_count==self.test_size and self.test_mode: 
+                if self.test_mode and test_count==self.test_size: 
                     break
                 
                 try:
@@ -681,9 +681,11 @@ class TTRSS:
 def schedule_job(config,batch_mode=False):
     ttrss=TTRSS(config)
     if batch_mode:
+        logging.info("Scheduling job every day at the following times:{}".format(str(config['message_times'])))
         for message_time in config['message_times']:
             schedule.every().day.at(message_time).do(ttrss.job)
     else:
+        logging.info("Scheduling job every minute.")
         schedule.every().minute.do(ttrss.job)
 
 
@@ -693,8 +695,8 @@ def schedule_job(config,batch_mode=False):
         if batch_mode:
             time.sleep(43140)
         else:
-        #sleep for 59.5 minutes
-            time.sleep(3570)
+        #sleep for 59 seconds
+            time.sleep(59)
 
 ##-----------------MAIN------------------##
 
@@ -744,6 +746,7 @@ if __name__ =="__main__":
         print("Invalid argument for --clearlogs, must be true or false")
         exit()
 
+    print('hello')
     try:
         if args.test=="true":
             if args.test_size==-1:
@@ -765,8 +768,9 @@ if __name__ =="__main__":
             ttrss=TTRSS(config)
             ttrss.job()
         elif args.test=="false":
+            print("Starting TTRSS in production mode.")
             config['test_mode']=False
-            schedule_job(config,args.batch)
+            schedule_job(config,True if args.batch=="true" else False)
         else:
             print("Invalid argument for --test, must be true or false")
     except Exception as e:

@@ -169,3 +169,5 @@ toignore
 *.html
 *.sh
 test_results
+*_test.ipynb
+
