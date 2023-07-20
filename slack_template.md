@@ -25,6 +25,3 @@
 
 Reference: {reference}
 
-Score: {score}
-
-Region: @{region}

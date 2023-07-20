@@ -167,3 +167,5 @@ cython_debug/
 toignore
 *_test.py
 *.html
+*.sh
+test_results

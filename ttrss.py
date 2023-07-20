@@ -70,14 +70,17 @@ class TTRSS:
         with open(config['prompt_file'],'r') as f:
             self.prompt=f.read()
         
-        with open(config['question_file'],'r') as f:
-            self.question=f.read()
+        # with open(config['question_file'],'r') as f:
+        #     self.question=f.read()
         
         with open(config['mrkdwn_template'],'r') as f:
             self.mrkdwn_template=f.read()
         
         with open(config['country_region_mapping'],'r') as f:
             self.country_region_mapping=json.load(f)
+        
+        with open(config['region_webhook_mapping'],'r') as f:
+            self.region_webhook_mapping=json.load(f)
         
         
         
@@ -108,7 +111,14 @@ class TTRSS:
             self.remove_meta
             ]
         
+        ##test specific config
         self.test_mode=config['test_mode']
+        if self.test_mode:
+
+            self.test_size=config['test']['test_size']
+            self.test_zapier=config['test']['test_zapier']
+            self.test_use_cheap_model=config['test']['test_use_cheap_model'] # better -> write this in the config file
+            self.test_mark_as_read=config['test']['test_mark_as_read']
 
         #TODO: i already wrote specific one for datareaches.net, might as well include it later...
         # self.scoring_metric=config['scoring_metric']
@@ -149,7 +159,7 @@ class TTRSS:
         return response.json()['content']
     
     def mark_as_read(self,article_id): #idea: we can make this a class.
-        if self.test_mode: #don't mark as read if we are in test mode
+        if self.test_mode and not self.test_mark_as_read:
             return
         mark_as_read_body=self.MARK_AS_READ_BODY
         mark_as_read_body['article_ids']=article_id
@@ -179,7 +189,7 @@ class TTRSS:
 ##-----------------GPT calls-----------------##
     def make_single_gpt_query(self,prompt):
         
-        model = "text-davinci-001" if self.test_mode else self.gpt_config['model'] #using cheaper model for testing purposes...
+        model = "gpt-3.5-turbo" if self.test_mode and self.test_use_cheap_model else self.gpt_config['model'] #using cheaper model for testing purposes... #NOTE: use even a cheaper model later...
         messages=self.gpt_config['messages']
         messages[0]['content']=prompt
         return openai.ChatCompletion.create(
@@ -221,7 +231,11 @@ class TTRSS:
         if gpt_response==None:
             return -1 #indicates error
         for field in gpt_response.keys():
-            if gpt_response[field]!="N/A" and field in metric_keys:
+            response_field=gpt_response[field]
+            if type(response_field)==list:
+                if len(response_field)==0 or (len(response_field)==1 and response_field[0]=="N/A"):
+                    continue
+            if gpt_response[field]!="N/A"  and field in metric_keys:
                 score += self.scoring_metric["metric"][field]
 
         return score
@@ -413,6 +427,10 @@ class TTRSS:
         return html
     
     def generate_mrkdwn(self,query_result):
+        for field in query_result.keys():
+            if type(query_result[field])==list or type(query_result[field])==set:#look at all these 'set's tomorrwo!!!
+                query_result[field]=', '.join(query_result[field])
+            
         
         mrkdwn=self.mrkdwn_template.format(title=query_result['Title'],\
                                         organization=query_result['Victim Organization'],\
@@ -429,18 +447,18 @@ class TTRSS:
                                         summary=query_result['Summary'],\
                                         actor_motivation=query_result['Actor Motivation'],\
                                         reference=query_result['Reference'],\
-                                        score=query_result['Score'],\
-                                        region=query_result['Region'],\
+                                        # score=query_result['Score'],\
                                             )
         
         return mrkdwn
 
-    def message_zapier(self,mrkdwn):
-        if self.test_mode:
+    def message_zapier(self,mrkdwn,associated_webhook):
+        if self.test_mode and not self.test_zapier:
             print(mrkdwn)
             return
         #make the post request, encode mrkdwn as utf-8
-        response=requests.post(self.zapier_webhook,data=mrkdwn.encode('utf-8'))
+        logging.debug("Sending message to zapier @ {}.".format(associated_webhook))
+        response=requests.post(associated_webhook,data=mrkdwn.encode('utf-8'))
         return response
 
 
@@ -454,10 +472,25 @@ class TTRSS:
         try:
             return self.country_region_mapping[country]
         except KeyError:
-            return "Unmapped"
+            return "Other"
         except TypeError:
             if type(country)==list:
-                return "" + ",".join([self.map_country_to_region(c) for c in country])
+                return list(set([self.map_country_to_region(c) for c in country]))
+    
+    def map_region_to_webhook(self,region):
+        try:
+            if type(region)==set or type(region)==list:#NOTE:look back here later!!!
+                return [self.region_webhook_mapping[r] for r in region]
+            return [self.region_webhook_mapping[region]]
+        
+        except KeyError:
+            logging.error("Region not found in mapping:"+str(region)+" with error:"+str(traceback.format_exc()))
+            return self.region_webhook_mapping["Other"]
+        except TypeError:
+            logging.error("Region not found in mapping:"+str(region)+" with error:"+str(traceback.format_exc()))
+            if type(region)==list: #technically this should never happen, but just in case...
+                logging.info("Region is a list, mapping each element in list:{}".format(str(region)))
+                return [self.map_region_to_webhook(r) for r in region]
 
 
 
@@ -536,6 +569,12 @@ class TTRSS:
         headlines=headlines_full_content+headlines_summary_content
         return headlines
 
+    def write_test_results(self,query_result):
+
+        with open("test_results/single_result_{}.json".format(datetime.now()),"w") as f:
+                json.dump(query_result,f)
+
+
     def job(self):
 
         logging.debug("Starting job at "+str(datetime.now()))
@@ -549,20 +588,32 @@ class TTRSS:
         query_results=[] #DELETE THIS LATER
 
         batch=[]
+        test_count=0
 
         for headline in headlines:
             try:
+                if test_count==self.test_size and self.test_mode: 
+                    break
                 
                 try:
                     query_result=self.process_unread(headline['id'],headline['category'])
                     if self.test_mode:
                         query_results.append(query_result)#DELETE THIS LATER
+                        test_count+=1
+                        logging.info("Finished {} out of {} tests.".format(test_count,self.test_size))
+                        logging.debug("IMDAT")
+
+
 
                     
                     result_score=self.score_gpt_response(query_result)
-                    if result_score<self.scoring_metric['threshold']:
+                    query_result=self.add_score(query_result,result_score)
+                    if result_score<self.scoring_metric['threshold']: #NOTE: remove the false later
                         self.write_anomaly(headline['id'],"Score is below threshold at "+str(result_score))
                         self.mark_as_read(headline['id'])
+                        logging.info("Score is below threshold at "+str(result_score))
+                        self.write_test_results(query_result)
+
                         continue
 
                 except Exception as e:
@@ -580,14 +631,26 @@ class TTRSS:
 
                 self.mark_as_read(headline['id'])
 
-                query_result=self.add_score(query_result)
-
+                # result_score=self.score_gpt_response(query_result)
+                # query_result=self.add_score(query_result,result_score)
+                logging.debug(str(query_result)+'\n')
+                logging.debug("Score:"+str(result_score))
                 assigned_regions=self.map_country_to_region(query_result['Victim Location'])
                 query_result=self.add_region(query_result,assigned_regions)
+
+                corresponding_channels=self.map_region_to_webhook(assigned_regions)
+                logging.debug("Corresponding channels:"+str(corresponding_channels))
+                for channel in corresponding_channels:#buraya o message zapier parametresini de ekle
+                    
+                    markdown=self.generate_mrkdwn(query_result)
+                    self.message_zapier(markdown,channel)
                 
 
 
                 markdown=self.generate_mrkdwn(query_result)
+                if self.test_mode:
+                    logging.info("TEST MODE: writing test results.") # BURASI BURASI BURASI
+                    self.write_test_results(query_result)
 
                 batch.append(markdown)
                 
@@ -604,12 +667,14 @@ class TTRSS:
         batch_concat='\n'.join(batch)
         
         
-
-        self.message_zapier(batch_concat)
+        # if self.batch:
+        #     self.message_zapier(batch_concat)
 
         if self.test_mode:
-            with open("test_results/result_{}.json".format(datetime.now()),"w") as f: ##COMMENT this later
+            with open("test_results/bulk_result_{}.json".format(datetime.now()),"w") as f: ##COMMENT this later
                 json.dump(query_results,f)
+            with open("test_results/bulk_markdown_result_{}.txt".format(datetime.now()),"w") as f:
+                f.write(batch)
 
 
 
@@ -645,6 +710,12 @@ if __name__ =="__main__":
     parser.add_argument('--test', dest='test',
                         help='Specify whether to run in test mode (no scheduling)',required=True)
     
+    parser.add_argument('--test_size', dest='test_size', default=-1,
+                        help='Specify the number of articles to test on.',required=False)
+
+    parser.add_argument('--test_zapier', dest='test_zapier', default=None,
+                        help='Specify whether to send messages to zapier in test mode.',required=False)
+    
     parser.add_argument('--batch', dest='batch',
                         help='Specify whether to run in batch mode (send all articles at given intervals.)',required=False)
     
@@ -652,12 +723,14 @@ if __name__ =="__main__":
     
     parser.add_argument('--clearlogs',dest='clear',help='Specify whether to clear the log file before starting.',required=False,default='false')
 
+    parser.add_argument('--test_use_cheap_model',dest='test_use_cheap_model',help='Specify whether to use the cheap model for testing purposes.',required=False,default='false')
     
+    parser.add_argument('--test_mark_as_read',dest='test_mark_as_read',help='Specify whether to mark articles as read in test mode.',required=False,default='true')
     
 
     args = parser.parse_args()
-    logging.basicConfig(filename=args.log_file,level=logging.DEBUG,format='[%(asctime)s] %(message)s')
-    logging.INFO("Starting TTRSS with the following parameters:{}\n".format(str(args))+"\n")
+    logging.basicConfig(filename=args.log_file,level=logging.DEBUG,format='[%(levelname)s]@[%(asctime)s]: %(message)s')
+    logging.info("Starting TTRSS with the following parameters:{}\n".format(str(args))+"\n")
 
 
     with open(args.config) as f:
@@ -673,7 +746,22 @@ if __name__ =="__main__":
 
     try:
         if args.test=="true":
+            if args.test_size==-1:
+                print("Please specify the number of articles to test on.")
+                exit()
+            if args.test_zapier==None:
+                print("Please specify whether to send messages to zapier in test mode.")
+                exit()
             config['test_mode']=True
+            config['test']={}
+            config['test']['test_size']=int(args.test_size)
+            config['test']['test_zapier']=True if args.test_zapier=="true" else False
+            config['test']['test_use_cheap_model']=True if args.test_use_cheap_model=="true" else False
+            config['test']['test_mark_as_read']=True if args.test_mark_as_read=="true" else False
+            # config['test_size']=int(args.test_size)
+            # config['test_zapier']=True if args.test_zapier=="true" else False
+            # config['test_use_cheap_model']=True if args.test_use_cheap_model=="true" else False
+
             ttrss=TTRSS(config)
             ttrss.job()
         elif args.test=="false":
