@@ -675,6 +675,14 @@ class TTRSS:
 
                 continue # TODO: remove this
 
+            except Exception as e:
+                logging.error("[{}]Error in job:".format(str(datetime.now())))
+                logging.error(traceback.format_exc())
+                self.mark_as_read(headline['id'])
+                self.write_anomaly(headline['id'],e)
+                continue # <-- this doesnt really do anything unless i add other stuff in the loop
+        
+
 
         #concatenate batch with newlines
         batch_concat='\n'.join(batch)
