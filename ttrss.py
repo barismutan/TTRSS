@@ -382,6 +382,7 @@ class TTRSS:
         soup = BeautifulSoup(html.text, 'html.parser')
         full_text=soup.get_text()
         text=self.remove_excess_whitespace(full_text)
+        #NOTE: DO OTHER HTML PREPROCESSING HERE
         return text
 
 ##-----------------Text Preprocessing-----------------##
@@ -428,8 +429,13 @@ class TTRSS:
     
     def generate_mrkdwn(self,query_result):
         for field in query_result.keys():
-            if type(query_result[field])==list or type(query_result[field])==set:#look at all these 'set's tomorrwo!!!
-                query_result[field]=', '.join(query_result[field])
+            try:
+                if type(query_result[field])==list or type(query_result[field])==set:#look at all these 'set's tomorrwo!!!
+                    query_result[field]=', '.join(query_result[field])
+            except TypeError as e:
+                logging.error("TypeError in generate_mrkdwn:"+str(e))
+
+        # return None <-- I forgot why I put this here, but I'm sure there was a reason...
             
         
         mrkdwn=self.mrkdwn_template.format(title=query_result['Title'],\
@@ -527,7 +533,7 @@ class TTRSS:
             original_link=self.get_article_link(article)
 
         
-        html=self.make_request_with_session(original_link)
+        html=self.make_request_with_session(original_link) # change this to response ( left side)
         
         if html is None:
             raise NoHTMLFoundException(article_id)
@@ -641,9 +647,16 @@ class TTRSS:
                 corresponding_channels=self.map_region_to_webhook(assigned_regions)
                 logging.debug("Corresponding channels:"+str(corresponding_channels))
                 for channel in corresponding_channels:#buraya o message zapier parametresini de ekle
-                    
-                    markdown=self.generate_mrkdwn(query_result)
-                    self.message_zapier(markdown,channel)
+                    try:
+                        markdown=self.generate_mrkdwn(query_result)
+                        self.message_zapier(markdown,channel)
+                    except Exception as e:
+                        logging.error("Error during generating markdown or messaging zapier:"+str(e))
+                        logging.error(traceback.format_exc())
+                        self.mark_as_read(headline['id'])
+                        # self.write_anomaly(headline['id'],e)
+                        continue
+
                 
 
 
@@ -656,7 +669,7 @@ class TTRSS:
                 
 
             except NoLinksFoundException as e:
-                logging.error("[{}]No links found for article:".format(str(datetime.now()))+"<"+str(headline['id'])+">")
+                logging.warning("[{}]No links found for article:".format(str(datetime.now()))+"<"+str(headline['id'])+">")
                 self.mark_as_read(headline['id'])
                 self.write_anomaly(headline['id'],e)
 
@@ -690,13 +703,18 @@ def schedule_job(config,batch_mode=False):
 
 
     while True:
-        schedule.run_pending()
-        #sleep for 11 hours and 59 minutes
-        if batch_mode:
-            time.sleep(43140)
-        else:
-        #sleep for 59 seconds
-            time.sleep(59)
+        try:
+            schedule.run_pending()
+            #sleep for 11 hours and 59 minutes
+            if batch_mode:
+                time.sleep(43140)
+            else:
+            #sleep for 59 seconds
+                time.sleep(59)
+        except Exception as e:
+            logging.error("[{}]Error in schedule_job:".format(str(datetime.now())))
+            logging.error(traceback.format_exc())
+            continue
 
 ##-----------------MAIN------------------##
 
@@ -820,3 +838,5 @@ if __name__ =="__main__":
 #2. move GPT calls to a separate class
 #3. move text preprocessing & link extraction to a separate class
 
+
+#error occured on 2023-07-24 13:08:47,721 is related to ...
