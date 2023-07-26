@@ -375,6 +375,7 @@ class TTRSS:
     def remove_meta(self,text):
         text=re.sub(r'<meta.*?>','',text,flags=re.DOTALL)
         return text
+    
 
 
     def extract_text(self,html):
@@ -847,4 +848,7 @@ if __name__ =="__main__":
 #3. move text preprocessing & link extraction to a separate class
 
 
-#error occured on 2023-07-24 13:08:47,721 is related to ...
+#TODO: improve the exception handling mechanism to message me on Slack when an unkown error occurs.
+#TODO: We have the problem of zapier returning 200 OK even when the message is not sent. We need to handle this.
+
+
