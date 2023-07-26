@@ -165,3 +165,9 @@ cython_debug/
 #.idea/
 
 toignore
+*_test.py
+*.html
+*.sh
+test_results
+*_test.ipynb
+
