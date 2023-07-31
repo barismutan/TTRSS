@@ -623,6 +623,15 @@ class TTRSS:
 
                         continue
 
+                    #Skip the Report if there is no actor, malware or vulnerability 
+                    if(query_result["Threat Actor"] == "N/A" and query_result["Malware"] == "N/A" and query_result["CVEs"] == "N/A"):
+                        self.write_anomaly(headline['id'],"No actor, malware or vulnerability found")
+                        self.mark_as_read(headline['id'])
+                        logging.info("No actor, malware or vulnerability found")
+                        self.write_test_results(query_result)
+
+                        continue
+
                 except Exception as e:
                     #HERE : in the future we should have a function that takes in the exception and does the hanndling.
                     logging.error(e)
