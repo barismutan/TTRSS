@@ -500,6 +500,11 @@ class TTRSS:
                 return [self.map_region_to_webhook(r) for r in region]
 
 
+    def check_if_na(self,field) -> bool:
+        if field=="N/A" or field=="" or (type(field)==list and (len(field)==0 or field[0]=="N/A")):
+            return True
+        return False
+
 
 ##-----------------Utilities-----------------##
 
@@ -624,7 +629,7 @@ class TTRSS:
                         continue
 
                     #Skip the Report if there is no actor, malware or vulnerability 
-                    if(query_result["Threat Actor"] == "N/A" and query_result["Malware"] == "N/A" and query_result["CVEs"] == "N/A"):
+                    if(self.check_if_na(query_result["Threat Actor"]) and self.check_if_na(query_result["Malware"]) and self.check_if_na(query_result["CVEs"])):
                         self.write_anomaly(headline['id'],"No actor, malware or vulnerability found")
                         self.mark_as_read(headline['id'])
                         logging.info("No actor, malware or vulnerability found")
