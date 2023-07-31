@@ -500,6 +500,11 @@ class TTRSS:
                 return [self.map_region_to_webhook(r) for r in region]
 
 
+    def check_if_na(self,field) -> bool:
+        if field=="N/A" or field=="" or (type(field)==list and (len(field)==0 or field[0]=="N/A")):
+            return True
+        return False
+
 
 ##-----------------Utilities-----------------##
 
@@ -619,6 +624,15 @@ class TTRSS:
                         self.write_anomaly(headline['id'],"Score is below threshold at "+str(result_score))
                         self.mark_as_read(headline['id'])
                         logging.info("Score is below threshold at "+str(result_score))
+                        self.write_test_results(query_result)
+
+                        continue
+
+                    #Skip the Report if there is no actor, malware or vulnerability 
+                    if(self.check_if_na(query_result["Threat Actor"]) and self.check_if_na(query_result["Malware"]) and self.check_if_na(query_result["CVEs"])):
+                        self.write_anomaly(headline['id'],"No actor, malware or vulnerability found")
+                        self.mark_as_read(headline['id'])
+                        logging.info("No actor, malware or vulnerability found")
                         self.write_test_results(query_result)
 
                         continue
